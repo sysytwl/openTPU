@@ -1,9 +1,11 @@
 // Board-level simulation: otpu_board (control registers, S slices, each with the native DRAM
 // adapter) in front of the channels' memory holding their physical images (ch0.bin, ch1.bin; slice
-// s's are ch<2s>.bin and ch<2s+1>.bin): MEM_NATIVE 2 (the
-// default) the build's channels, otpu_mem_ch in front of a LiteDRAM native-port model
-// (otpu_chmem); 1 the native memory model alone (otpu_native_mem) -- driven by a host script
-// (+dir=<d>, <d>/host.txt) -- the same register and memory protocol the PCIe host driver uses (opentpu/host/board.py). Script lines:
+// s's are ch<2s>.bin and ch<2s+1>.bin): MEM_NATIVE 2 (the default) the build's channels,
+// otpu_mem_ch in front of a LiteDRAM native-port model (otpu_chmem); 3 an HBM board's, otpu_mem_ch
+// (RMW 0, RBUS 0) in front of the HBM AXI3 model through the native->AXI3 bridges (otpu_hbmch;
+// +hbm_* plusargs, rtlsim.MEMORY["NATIVE"] "hbm"); 1 the native memory model alone
+// (otpu_native_mem) -- driven by a host script (+dir=<d>, <d>/host.txt) -- the same register and
+// memory protocol the PCIe host driver uses (opentpu/host/board.py). Script lines:
 //   W <addr> <value>          AXI-Lite write
 //   P <addr> <mask> <value>   poll until (read(addr) & mask) == value
 //   R <addr>                  read, printed as "REG <addr> <value>"
@@ -41,6 +43,9 @@ module tb_board;
   parameter bit DSTEP      = 1'b1;
   parameter int MEM_NATIVE = 2;            // the channels: 2 otpu_chmem (otpu_mem_ch and a LiteDRAM
                                            // model), 1 otpu_native_mem
+  parameter int DRAIN     = 16384;         // HBM only (MEM_NATIVE 3): cycles waited after the
+                                           // script before the dump, so the writes the controller
+                                           // took (n_wdone), still in the bridge or the model, land
   parameter bit HOSTCAL    = 1'b0;         // CAPS bit27 (the host calibrates the controllers)
   parameter bit SEQ_WC     = 1'b0;    // EXPERIMENTAL: otpu_seq's wait entries (WAITC, docs/seq_vpu.md; CFG_UARCH bit24)
   parameter int PLATFORM   = 1;            // CFG_PLATFORM (opentpu/target.py)
@@ -153,7 +158,14 @@ module tb_board;
 
   for (genvar s = 0; s < S; s++) begin : g_slice
     localparam int C = 2 * s;
-    if (MEM_NATIVE == 2) begin : g_ch
+    if (MEM_NATIVE == 3) begin : g_hbm
+      otpu_hbmch #(.WORDS(WORDS), .LAT(LAT), .PHYS(1), .SID(s)) u_mem (
+        .clk, .rst,
+        .n_cvalid(ncv[C +: 2]), .n_cready(ncr[C +: 2]), .n_cwe(ncwe[C +: 2]),
+        .n_caddr(nca[C +: 2]), .n_wvalid(nwv[C +: 2]), .n_wready(nwr[C +: 2]),
+        .n_wdata(nwd[C +: 2]), .n_wmask(nwm[C +: 2]), .n_rvalid(nrv[C +: 2]),
+        .n_rdata(nrd[C +: 2]), .n_wdone(nwdone[C +: 2]), .n_err(nerr[C +: 2]), .dump);
+    end else if (MEM_NATIVE == 2) begin : g_ch
       otpu_chmem #(.WORDS(WORDS), .LAT(LAT), .PHYS(1), .SID(s)) u_mem (
         .clk, .rst,
         .n_cvalid(ncv[C +: 2]), .n_cready(ncr[C +: 2]), .n_cwe(ncwe[C +: 2]),
@@ -304,6 +316,13 @@ module tb_board;
       endcase
     end
     $fclose(fd);
+    // An HBM board's memory: every store is counted (n_wdone: the command handshake into the
+    // bridge), but it may still be in the bridge's FIFOs and in the AXI3 model's queues and
+    // latency -- deeper than the DDR boards' otpu_chmem / otpu_native_mem. The host's DRAM read
+    // is served from the dumped image (opentpu/host/board.py: SimTransport's mem_read), so the
+    // dump is that read and must be ordered behind every write the controller took: let the
+    // memory drain first (the accelerator has halted; nothing new is issued).
+    if (MEM_NATIVE == 3) repeat (DRAIN) @(posedge clk);
     @(negedge clk);
     dump = 1'b1;                 // exactly one rising edge sees it
     @(negedge clk);

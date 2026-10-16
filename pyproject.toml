@@ -4,7 +4,12 @@ version = "0.1.0"
 description = "openTPU: thin LLM inference accelerator -- SystemVerilog RTL, ISA simulator, Triton-style language and compiler"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
-dependencies = ["numpy", "textual"]
+dependencies = [
+    "numpy",
+    "textual",
+    "torch>=2.14.1",
+    "transformers>=5.20.0",
+]
 
 [project.optional-dependencies]
 # MiniCPM-V's images (opentpu/llm/minicpmv.py): torchvision's decode and resize as HF's processor,

@@ -8,8 +8,9 @@ Stages stop at the first failure, with a hint. Each builds on the previous one:
   1 link       the control registers answer (ID register)
   2 config     the bitstream's VERSION (D / MCOLS / LANES) gives the host configuration
                (opentpu.host.board.device_config); OTPU_MCOLS / OTPU_LANES, when set, must agree
-  3 calib      both DDR3 controllers report calibration done (a LiteDRAM bitstream's, CAPS
-               bit27, calibrated by the host first: memcal, as Board does when it opens)
+  3 calib      both memory controllers report calibration done (a LiteDRAM bitstream's, CAPS
+               bit27, calibrated by the host first: memcal, as Board does when it opens; an HBM
+               bitstream's IP self-calibrates: mem_ctrl "xilinx-hbm", apb_complete_0/1)
      scrub      zeros over the whole DRAM once per configuration (Board.scrub): with ECC, a read
                of a beat never written since power-up hangs
   4 regs       SCRATCH register write / read
@@ -59,12 +60,15 @@ HINTS = {
     "config": "The host follows the bitstream's VERSION register: unset OTPU_MCOLS / "
               "OTPU_LANES, or load the bitstream built for them (docs/board.md, which bitstream "
               "to load). D must be 128.",
-    "calib": "A DDR3 controller did not calibrate. LiteDRAM bitstreams (CAPS bit27): the "
+    "calib": "A memory controller did not calibrate. LiteDRAM bitstreams (CAPS bit27): the "
              "core's own CPU calibrates them at configuration, or the host does for a core "
              "without one (otpu-memcal shows the result and the CPU's errors, otpu-memcal cal "
              "--force redoes it from the host; docs/litedram.md). MIG bitstreams (before "
-             "LiteDRAM): check the MIG pinout / clocking in the bitstream (docs/board.md). "
-             "Either: the memory voltage. STATUS bit5 = channel 0, bit6 = channel 1.",
+             "LiteDRAM): check the MIG pinout / clocking in the bitstream (docs/board.md). HBM "
+             "bitstreams (mem_ctrl \"xilinx-hbm\", the ADM-PCIE-9H3): the HBM IP brings the HBM "
+             "up itself (PG276): check its reset, the 100 MHz HBM_REF_CLK and its "
+             "apb_complete_0/1 (otpu-hbm shows the IP's status). Either: the memory voltage. "
+             "STATUS bit5 = channel 0, bit6 = channel 1.",
     "scrub": "Writing the DRAM failed or timed out: DMA host->card is broken (dmesg: XDMA "
              "errors); try the driver in poll mode (sudo otpu-setup --poll).",
     "regs": "Register writes do not stick: the AXI-Lite path (XDMA BAR0 -> otpu_ctrl) is "
@@ -175,12 +179,26 @@ def main(argv=None) -> int:
         msg = config_summary(i)
         return True, msg
 
+    def mem_ctrl():
+        """The bitstream's memory-controller kind from its target (CFG_PLATFORM): "litedram",
+        "xilinx-hbm", ...; None before register map 4 or for a platform this tree lacks (there
+        CAPS bit27 is the only signal)."""
+        c = board.info().get("cfg")
+        if not c:
+            return None
+        from opentpu.target import by_platform
+        tg = by_platform(c["platform"])
+        return tg.platform.get("mem_ctrl") if tg else None
+
     def calib():
-        # a host-calibrated bitstream (LiteDRAM): the channels not calibrated since configuration
-        # first (the Board above opens without check, so it has not; a ddrcal.CalError fails
-        # the stage)
+        # The host calibrates LiteDRAM controllers (memcal; CAPS bit27 = CAP_HOSTCAL). The
+        # self-calibrating ones report readiness on STATUS CALIB0/1 themselves: the MIG
+        # bitstreams (before LiteDRAM), and the Xilinx HBM IP (mem_ctrl "xilinx-hbm", the
+        # ADM-PCIE-9H3) whose apb_complete_0/1 drive the same bits -- M4 reads the IP's own
+        # status through opentpu.host.hbm.ready. The dispatch key is the target's mem_ctrl; a
+        # bitstream without CFG_PLATFORM (register map < 4) falls back to CAPS bit27.
         how = ""
-        if memcal.hostcal(t):
+        if mem_ctrl() in (None, "litedram") and memcal.hostcal(t):
             t0 = time.time()
             res = memcal.ensure(t, log=lambda m: print(f"         {m}", flush=True))
             who = {"selfcal": "the core's CPU", "selfcal+host": "the core's CPU and the host"}.get(

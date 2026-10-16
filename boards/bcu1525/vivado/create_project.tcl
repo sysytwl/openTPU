@@ -72,7 +72,8 @@ set rtl [list \
   rtl/shell/otpu_ctrl.sv rtl/shell/otpu_trace.sv \
   rtl/shell/otpu_board.sv rtl/mem/otpu_native_dram.sv \
   rtl/shell/otpu_afifo.sv rtl/shell/otpu_mem_ch.sv \
-  rtl/shell/otpu_axi_split2.sv rtl/boards/bcu1525/otpu_bcu_sys.sv \
+  rtl/shell/otpu_axi_split2.sv rtl/shell/otpu_native_axi3.sv \
+  rtl/boards/bcu1525/otpu_bcu_sys.sv \
   rtl/boards/bcu1525/otpu_fpga_top_bcu.sv]
 foreach f $rtl {
   add_files -norecurse $root/$f

@@ -340,6 +340,10 @@ def test_rtl_file_lists_agree():
     assert _tcl_rtl(ROOT / "boards/bcu1525/vivado/create_project.tcl") == bcu
     assert _make_rtl(ROOT / "boards/bcu1525/Makefile") == \
         [f for f in bcu if not f.endswith("otpu_fpga_top_bcu.sv")]
+    admpcie = [f"rtl/{f}" for f in T.sources("admpcie9h3")]
+    assert _tcl_rtl(ROOT / "boards/admpcie9h3/vivado/create_project.tcl") == admpcie
+    assert _make_rtl(ROOT / "boards/admpcie9h3/Makefile") == \
+        [f for f in admpcie if not f.endswith("otpu_fpga_top_admpcie9h3.sv")]
 
 
 def test_board_uarch_builds_the_cards_collective_unit():
@@ -372,6 +376,44 @@ def test_bcu1525_target_matches_its_rtl_defaults():
             assert p[k] == top[k], (f, k)
     assert p["RPB"] == 8 * p["LANES"]                       # the tops: RPB = 8 * LANES
     assert (p["NCH"], p["CH_LOG2"], p["DRAM_LOG2"]) == (2, 31, 32)
+
+
+def _admpcie9h3_cfg() -> dict:
+    """The CFG_* registers of the ADM-PCIE-9H3's build (targets/admpcie9h3.toml)."""
+    from opentpu.target import arch_hash, build_config
+    t = T.load("admpcie9h3")
+    a, u, p = t.arch, t.uarch, t.platform
+    return dict(S=a["S"], TMEM_WORDS=a["TMEM_WORDS"], IMEM_WORDS=a["IMEM_WORDS"],
+                ACT_BLOCKS=a["ACT_BLOCKS"], DRAM_BYTES=a["DRAM_BYTES"],
+                channels=p["channels_per_slice"], channel_bytes=p["channel_bytes"],
+                MXU_IMPL=u["MXU_IMPL"], TMEM_IMPL=u["TMEM_IMPL"], VPU_CL=u["VPU_CL"],
+                ULANES=u["ULANES"], platform=t.platform_id, hash=arch_hash(build_config(t)))
+
+
+def test_admpcie9h3_target_is_the_hbm_board(no_env):
+    """M1: the ADM-PCIE-9H3 (xcvu35p HBM) is a first-class target. It resolves as the HBM board
+    (mem "hbm", mem_ctrl "xilinx-hbm", not host-calibrated), registers platform_id 3, and the
+    host's memory dispatch points see an HBM card rather than a host-calibrated LiteDRAM / DDR4
+    one (the M4 opentpu.host.hbm is its analogue). Its RTL list adds the native->AXI3 bridge and
+    its two top files (M2 stubs)."""
+    t = T.load("admpcie9h3")
+    assert t.platform_id == 3 and t.platform["mem"] == "hbm" \
+        and t.platform["mem_ctrl"] == "xilinx-hbm" and not t.platform["hostcal"]
+    assert T.by_platform(3).name == "admpcie9h3"
+    assert "shell/otpu_native_axi3.sv" in T.sources(t)
+    assert T.sources(t)[-2:] == ["boards/admpcie9h3/otpu_admpcie9h3_sys.sv",
+                                 "boards/admpcie9h3/otpu_fpga_top_admpcie9h3.sv"]
+    from opentpu.host import ddr4, memcal
+    from opentpu.host.fake import FakeTransport
+    card = FakeTransport(devname=None, regmap=4, cfg=_admpcie9h3_cfg())
+    card.ecc = True                                     # (a card's XdmaTransport: ecc True)
+    assert not memcal.hostcal(card) and not ddr4.present(card)
+    # config_summary names the board and its memory (CAPS bit3 carries the mem_mts the IP runs at)
+    from opentpu.host.board import config_summary
+    info = Board(FakeTransport(devname=None, regmap=4, cfg=_admpcie9h3_cfg(),
+                               ddr_mts=int(t.platform["mem_mts"]))).info()
+    assert "admpcie9h3 (S=2, 2 channels x 2048 MiB)" in config_summary(info)
+    assert "HBM-1000" in config_summary(info)
 
 
 def test_tech_families_define_the_same_cells():

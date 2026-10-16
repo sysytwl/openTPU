@@ -80,10 +80,16 @@ TECH = {"generic": ["tech/generic/otpu_tech_dsp.sv", "tech/generic/otpu_tech_ram
         "asic": ["tech/generic/otpu_tech_dsp.sv", "tech/asic/otpu_tech_ram.sv"]}
 SHELL = ["shell/otpu_ctrl.sv", "shell/otpu_trace.sv", "shell/otpu_board.sv",
          "mem/otpu_native_dram.sv", "shell/otpu_afifo.sv", "shell/otpu_mem_ch.sv",
-         "shell/otpu_axi_split2.sv"]
+         "shell/otpu_axi_split2.sv",
+         "shell/otpu_native_axi3.sv"]     # the native->AXI3 bridge (HBM boards; M2)
 BOARDS = {"ypcb-00338": ["boards/ypcb-00338/otpu_native_sys.sv",
                          "boards/ypcb-00338/otpu_fpga_top_ld.sv"],
-          "bcu1525": ["boards/bcu1525/otpu_bcu_sys.sv", "boards/bcu1525/otpu_fpga_top_bcu.sv"]}
+          "bcu1525": ["boards/bcu1525/otpu_bcu_sys.sv", "boards/bcu1525/otpu_fpga_top_bcu.sv"],
+          # the board's own AXI4-Lite -> APB bridge (BAR0 0x40000 -> the HBM IP's APB_0/1) comes
+          # before the two tops, so sources(t)[-2:] stays the sys/top pair (tests/test_target.py)
+          "admpcie9h3": ["boards/admpcie9h3/otpu_axi_apb_bridge.sv",
+                         "boards/admpcie9h3/otpu_admpcie9h3_sys.sv",
+                         "boards/admpcie9h3/otpu_fpga_top_admpcie9h3.sv"]}
 
 
 class TargetError(ValueError):

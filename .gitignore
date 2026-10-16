@@ -9,3 +9,11 @@ models/
 tools/tourney/runs/*/agents/
 tools/tourney/runs/fmax/*/agents/
 tools/tourney/runs/_full/*.lock
+
+# Vivado batch journals/logs and crash dumps (repo root), and the harness's rotated logs
+/.Xil/
+/vivado*
+*.backup.log
+*.backup.jou
+# the ADM-PCIE-9H3 board kit (a downloaded reference; M0.3): keep on disk, out of git
+/host_hbm-admpcie9h3-v1_0_0.zip

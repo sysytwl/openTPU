@@ -31,6 +31,13 @@
 set c_clk [get_clocks -quiet -of_objects [get_ports clk]]
 set c_ucl [get_clocks -quiet -of_objects [get_ports uclk]]
 set c_xcl [get_clocks -quiet -of_objects [get_ports xclk]]
+# uclk normally is the controller's own clock (LiteDRAM's sys: a generated clock of its own, so
+# get_clocks finds it on the port). A board may instead tie it to clk -- the ADM-PCIE-9H3's
+# otpu_mem_ch runs its controller side in core_clk, the HBM AXI clock, so the port carries clk and
+# get_clocks finds nothing. There is then no clk<->uclk crossing at all, and every pair below is
+# meant with uclk = clk: the clk/uclk ones become same-clock (a plain max delay of one period) and
+# the xclk ones cross clk.
+if {![llength $c_ucl]} { set c_ucl $c_clk }
 set t_clk [get_property -quiet -min PERIOD $c_clk]
 set t_ucl [get_property -quiet -min PERIOD $c_ucl]
 set t_xcl [get_property -quiet -min PERIOD $c_xcl]

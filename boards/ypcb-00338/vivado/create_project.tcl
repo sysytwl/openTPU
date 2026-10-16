@@ -101,7 +101,8 @@ set rtl [list \
   rtl/shell/otpu_ctrl.sv rtl/shell/otpu_trace.sv \
   rtl/shell/otpu_board.sv rtl/mem/otpu_native_dram.sv \
   rtl/shell/otpu_afifo.sv rtl/shell/otpu_mem_ch.sv \
-  rtl/shell/otpu_axi_split2.sv rtl/boards/ypcb-00338/otpu_native_sys.sv \
+  rtl/shell/otpu_axi_split2.sv rtl/shell/otpu_native_axi3.sv \
+  rtl/boards/ypcb-00338/otpu_native_sys.sv \
   rtl/boards/ypcb-00338/otpu_fpga_top_ld.sv]
 add_files -norecurse $root/boards/ypcb-00338/litedram/otpu_litedram.v
 # the core's identifier ROM ("openTPU LiteDRAM"), which the Verilog $readmemh's by file name:

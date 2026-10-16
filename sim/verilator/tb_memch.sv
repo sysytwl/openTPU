@@ -648,6 +648,7 @@ module tb_memch_axi #(
   parameter int NS = 256,
   parameter int SPL = 0,                   // split region: it owns bytes 32-63 of each beat
   parameter int NSP = 64,
+  parameter int NCH = 2,                   // the channels it spreads over (1: a single channel's tb)
   parameter string NAME = "xdma"
 ) (
   input  logic                 clk,
@@ -825,7 +826,7 @@ module tb_memch_axi #(
       if (issued < ntx && ($urandom % 100) < 50) begin
         int c;
         logic [IDW-1:0] id;
-        c = $urandom % 2;
+        c = $urandom % NCH;
         id = IDW'($urandom);
         if (seq == 0 && ($urandom % 100) < psh) begin
           // a shared beat: read one the accelerator has published, or write the next one

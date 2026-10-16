@@ -537,9 +537,15 @@ class SimTransport:
         shell = root / "rtl/shell"                  # the FPGA boards' shell (docs/targets.md)
         srcs += [shell / "otpu_ctrl.sv", shell / "otpu_trace.sv", shell / "otpu_board.sv"]
         native = rtlsim.MEMORY["NATIVE"] if self.native is None else self.native
+        # an HBM board (targets/admpcie9h3.toml): the bridge and its AXI3 model instead of a
+        # LiteDRAM controller model
+        hbm = self.target.platform.get("mem") == "hbm"
         srcs += [rtlsim.TB / "otpu_native_mem.sv", shell / "otpu_afifo.sv", shell / "otpu_mem_ch.sv",
                  shell / "otpu_axi_split2.sv",      # otpu_native_reg (tb_board NREG)
                  rtlsim.TB / "otpu_chmem.sv", rtlsim.TB / "otpu_ldn_model.sv"]
+        if hbm:
+            srcs += [shell / "otpu_native_axi3.sv", rtlsim.TB / "otpu_hbm_model.sv",
+                     rtlsim.TB / "otpu_hbmch.sv"]
         srcs += [rtlsim.TB / "tb_board.sv"]
         from opentpu.isasim import board_config
         cfg = board_config()                        # OTPU_MCOLS / OTPU_LANES: the "bitstream"
@@ -551,7 +557,7 @@ class SimTransport:
              "MXU_IMPL": rtlsim.UARCH.get("MXU_IMPL", 2),
              # the MXU's epilogue lanes as the target builds them (OTPU_MXU_E overrides)
              "MXU_E": rtlsim.UARCH.get("MXU_E", self.target.uarch.get("MXU_E", 0)),
-             "MEM_NATIVE": 2 if native == "ld" else 1}
+             "MEM_NATIVE": 3 if hbm else 2 if native == "ld" else 1}
         if rtlsim.UARCH.get("SEQ_WC"):              # (EXPERIMENTAL: WAITC, CFG_UARCH bit24)
             p["SEQ_WC"] = 1
         if "COLL_GATHER" in rtlsim.UARCH:           # the board's: BAR alone at S = 1 (gather)
@@ -581,7 +587,10 @@ class SimTransport:
             (d / "host.txt").write_text("\n".join(self.script) + "\n")
             self.script, self.nreads = [], 0
             r = rtlsim.run_sim([str(exe), f"+dir={d}", f"+axi_stall={self.stall}",
-                                f"+axi_seed={self.seed}", *self.plusargs])
+                                f"+axi_seed={self.seed}"]
+                               + ([f"+hbm_stall={self.stall}", f"+hbm_seed={self.seed}"]
+                                  if hbm else [])
+                               + self.plusargs)
             out = self.out = r.stdout + r.stderr
             if "DONE" not in out:
                 raise RuntimeError(f"board simulation failed:\n{out[-3000:]}")
@@ -990,6 +999,8 @@ class Board:
         from opentpu.host import ddr4, memcal
         memcal.ecc(self.t, clear=True)
         ddr4.ecc(self.t, clear=True)
+        # M4: on an HBM board (the target's mem_ctrl "xilinx-hbm") opentpu.host.hbm.ecc(clear=True)
+        # clears the HBM IP's SECDED counters here too (no-op on the DDR boards).
         self.t.reg_write(R.R_SCRATCH, R.DRAM_INIT)
         return True
 

@@ -1,0 +1,64 @@
+# The Alpha Data ADM-PCIE-9H3: Xilinx Virtex UltraScale+ VU35P HBM (xcvu35p-fsvh2104-2-e),
+# 8 GB of in-package HBM reached through AMD's hard HBM controller and the Xilinx HBM IP (PG276:
+# AXI3 slave ports, no memory pins, no MIG / LiteDRAM / calibration firmware), PCIe Gen3 x16.
+# Two accelerator slices, together on the whole 8 GB: each slice has its own 4 GiB window, its
+# two channels being the card's channels 2s and 2s+1 at j x 2 GiB (opentpu/host/board.py
+# channel_map, the block design's DMA map, exactly as the DDR boards). Bring-up plan: a
+# development build at 100 MHz first (docs/admpcie9h3.md; docs/plans/vu35p-hbm/).
+
+[target]
+name = "admpcie9h3"
+kind = "fpga"
+platform_id = 3                 # 1 = ypcb-00338, 2 = bcu1525, 3 = admpcie9h3 (the CFG_PLATFORM register)
+description = "ADM-PCIE-9H3: xcvu35p, 8 GB HBM (Xilinx HBM IP), XDMA Gen3 x16; 2 slices x 2 channels"
+
+[arch]                          # opentpu.isasim.Config: what programs depend on
+S = 2                           # two slices, together on the whole 8 GB HBM
+D = 128
+MCOLS = 4
+ACT_BLOCKS = 128
+ACT_ROWS = 0                    # no MM replay (the MXU streams 4 columns of up to MCOLS rows)
+TMEM_WORDS = 65536
+IMEM_WORDS = 32768
+DRAM_BYTES = 4294967296         # per slice: the ISA's 32-bit DRAM addresses = 4 GiB
+LANES = 8
+PAIR = true
+DSTEP = true
+STREAM = true
+SEQ_WC = false                  # bring-up: WAITC off (as bcu1525); enable after qual
+
+[uarch]                         # timing only: RTL parameters the programs do not see
+MXU_IMPL = 2                    # systolic (docs/mxu_systolic.md)
+MXU_CL = 16
+VPU_CL = 2
+ULANES = 8
+TMEM_IMPL = 0                   # bring-up: one copy per read port (bcu1525's choice);
+                                # TMEM_URAM=1 (boards/admpcie9h3/vivado/tmem_uram.xdc, M3) moves
+                                # them to UltraRAM: the VU35P's block RAM is the tight resource
+RPB = 0                         # every read lane (replicated: reads never conflict)
+WPB = 1
+WIN = 16
+FIFO_DEPTH = 1024
+TRACE_DEPTH = 16384
+PQ_WIN = 1024
+CHASH = true                    # hashed channel interleave (otpu_native_dram)
+
+[tech]
+family = "xilinxus"             # rtl/tech/xilinxus: DSP48E2 cells
+part = "xcvu35p-fsvh2104-2-e"
+vendor = "xilinx"
+
+[platform]
+board = "admpcie9h3"
+core_mhz = 100.0                # development builds first (docs/bcu1525.md section 2 rule)
+mem = "hbm"                     # the in-package HBM through the Xilinx HBM IP (PG276)
+mem_mts = 1000                  # the HBM data rate the IP is configured for (TCK 500 MHz; M0.2)
+mem_ctrl = "xilinx-hbm"         # the IP calibrates and brings up the HBM itself at power-up
+hostcal = false                 # no host calibration (no RTL/shell/otpu-native-axi3 equivalent)
+channels_per_slice = 2          # the shell's structure (slice s on channels 2s, 2s+1)
+channel_bytes = 2147483648      # 2 GiB per channel; channel j at j x this (host DMA map)
+channel_phys_bytes = 2147483648 # channel j occupies HBM regions j*8 .. j*8+7 of 32 x 256 MB
+beat_bytes = 64
+host = "pcie"
+pcie_gen = 3
+pcie_lanes = 16

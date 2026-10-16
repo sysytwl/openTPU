@@ -158,7 +158,8 @@ XUNIT = {
                    "TMEM port muxes, DRAM ports), otpu_top, otpu_pkg, the board wrappers "
                    "(otpu_board: PCIe bridge, DRAM adapter, control registers, trace; "
                    "otpu_native_sys: the channels' bridges (otpu_mem_ch, otpu_afifo) and XDMA's "
-                   "split (otpu_axi_split2); otpu_fpga_top_ld: clocks and resets) and the core timing "
+                   "split (otpu_axi_split2; otpu_native_axi3: the native-to-AXI3 bridges of the "
+                   "HBM boards); otpu_fpga_top_ld: clocks and resets) and the core timing "
                    "constraints (otpu_top_ld.xdc: pblocks, "
                    "placement, no timing exceptions or clock changes). Changes here target paths that cross "
                    "unit boundaries: register slices on inter-unit buses, fanout of broadcast "
@@ -167,6 +168,7 @@ XUNIT = {
                 "rtl/shell/otpu_board.sv", "rtl/shell/otpu_ctrl.sv",
                 "rtl/boards/ypcb-00338/otpu_native_sys.sv", "rtl/shell/otpu_mem_ch.sv",
                 "rtl/shell/otpu_afifo.sv", "rtl/shell/otpu_axi_split2.sv",
+                "rtl/shell/otpu_native_axi3.sv",
                 "rtl/boards/ypcb-00338/otpu_fpga_top_ld.sv", "rtl/shell/otpu_trace.sv",
                 "boards/ypcb-00338/constraints/otpu_top_ld.xdc"],
     "synth": {"parts": []},

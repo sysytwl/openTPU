@@ -92,7 +92,16 @@ module otpu_mem_ch #(
   parameter int OD   = 32,        // output write-data FIFO per port: writes issued, data not taken
   parameter int XQD  = 32,        // XDMA's command and write-data FIFOs, beats (a batch's room)
   parameter int XT   = 256,       // XDMA's batches: uclk cycles a ready X waits for one (0: none)
-  parameter int XB   = 24         // ... or until XB of its commands are queued (0: the wait alone)
+  parameter int XB   = 24,        // ... or until XB of its commands are queued (0: the wait alone)
+  // RMW = 1: a partial beat (any byte not written) is read-modify-written here, so the controller
+  // sees whole beats only (today's DDR boards). RMW = 0: the partial beat's byte enables go out on
+  // c_wdata_we and the write data's unwritten bytes are undefined; the converter (otpu_native_axi3)
+  // passes them as AXI WSTRB and the HBM IP's own read-modify-write fills the beat (the HBM board).
+  parameter bit RMW  = 1'b1,
+  // RBUS = 1: the core's two ports share one read bus (one decoder, as litedram's ports), so port
+  // 1 returns its beat on port 0's data (today's DDR boards). RBUS = 0: each port drives its own
+  // read data (the HBM bridges, one port a pseudo-channel half).
+  parameter bit RBUS = 1'b1
 ) (
   // accelerator (otpu_native_dram), core clock
   input  logic            clk,
@@ -150,7 +159,7 @@ module otpu_mem_ch #(
   output logic [1:0][63:0] c_wdata_we,    // 1 = write the byte (all ones: whole beats)
   input  logic [1:0]      c_rdata_valid,  // each port's in its command order, no backpressure;
                                           //   one port at a time
-  input  logic [1:0][511:0] c_rdata_data  // one bus: port 1's is port 0's (only port 0's is read)
+  input  logic [1:0][511:0] c_rdata_data  // RBUS: one bus, port 1's is port 0's; else each its own
 );
   localparam int QW = 26;                  // command: {write, beat[24:0]}
   localparam int DW = 577;                 // write data: {partial, byte enables[63:0], data[511:0]}
@@ -449,6 +458,7 @@ module otpu_mem_ch #(
   logic [DW-1:0] wd;
   logic [1:0]    oq_wv, oq_wr, of_wv, of_wr, tg_wr, tg_rv;
   logic [511:0]  of_wd;
+  logic [575:0]  of_wf;
   logic [1:0][TW-1:0] tg_rd;
   logic          rm_ret, rm_ok;
   assign a_ok = aq_rv && (aq_rd[QW-1] ? ad_rv : a_rok);
@@ -489,7 +499,7 @@ module otpu_mem_ch #(
   assign wd    = sel_x ? xd_rd : ad_rd;
   assign tp    = addr[7];                  // the port: the beat's bank parity
   assign part  = we && wd[DW-1];
-  assign rmw   = part;
+  assign rmw   = RMW && part;              // RMW = 0: the partial beat goes out with its byte enables
   assign a_room = oq_wr[aq_rd[7]] && (!aq_rd[QW-1] || of_wr[aq_rd[7]]);
   assign x_room = oq_wr[xq_rd[7]] && (!xq_rd[QW-1] || of_wr[xq_rd[7]]);
   assign go    = !rm_busy && (pick_x ? x_ok && x_room : a_ok && a_room);
@@ -497,16 +507,16 @@ module otpu_mem_ch #(
   assign x_rgo = !rm_busy && pick_x && x_ok && x_room && !xq_rd[QW-1];
 
   // read data: at most one port returns a beat in a cycle (they share the channel's data bus);
-  // its tag, at the head of that port's tag FIFO, says where it goes. The core's ports carry one
-  // read bus (tools/litedram/ecc_ports.py: one decoder, and each port's register behind it loads
-  // every cycle, their rdata ready being tied high), so the beat is on port 0's data whichever
-  // port returns it: no port mux on the valids.
+  // its tag, at the head of that port's tag FIFO, says where it goes. RBUS = 1: the core's ports
+  // carry one read bus (tools/litedram/ecc_ports.py: one decoder, and each port's register behind
+  // it loads every cycle, their rdata ready being tied high), so the beat is on port 0's data
+  // whichever port returns it. RBUS = 0: each port drives its own read data.
   logic          rv, rp;
   logic [511:0]  rdat;
   logic [TW-1:0] rtag;
   assign rv   = |c_rdata_valid;
   assign rp   = c_rdata_valid[1];
-  assign rdat = c_rdata_data[0];
+  assign rdat = RBUS ? c_rdata_data[0] : c_rdata_data[rp];
   assign rtag = tg_rd[rp];
 
   // read-modify-write: the read goes with an RMW tag, the write's command and data stay at the
@@ -526,12 +536,18 @@ module otpu_mem_ch #(
   assign ad_rr = (go && !pick_x && we && !rmw) || (rm_ret && !rm_x);
   assign xd_rr = (go && pick_x && we && !rmw) || (rm_ret && rm_x);
 
-  // output write data: whole beats, a merged one with the read's data in the lanes not written.
-  // While an RMW is in progress only its merged write enters the queues (go waits), so the merge
-  // follows rm_busy, a flip-flop, rather than the returning beat's tag.
-  always_comb
+  // output write data: {byte enables, 512-bit beat}. RMW = 1: the merge fills the lanes not
+  // written, so the whole beat goes out (the enables are all ones). RMW = 0: the head's own byte
+  // enables ride with the data (c_wdata_we follows the FIFO head, not the arbiter's head). While
+  // an RMW is in progress only its merged write enters the queues (go waits), so the merge follows
+  // rm_busy, a flip-flop, rather than the returning beat's tag.
+  logic [63:0] of_we;
+  always_comb begin
     for (int k = 0; k < 64; k++)
       of_wd[8 * k +: 8] = (rm_busy && !wd[512 + k]) ? rdat[8 * k +: 8] : wd[8 * k +: 8];
+    of_we = RMW ? '1 : wd[512 +: 64];
+    of_wf = {of_we, of_wd};
+  end
 
   // per port: the output command queue (a FIFO behind a register: the crossbar's inputs come from
   // flip-flops; a command bypasses the empty FIFO), the output write-data FIFO (pushed with the
@@ -599,10 +615,14 @@ module otpu_mem_ch #(
       end
 
     assign of_wv[p] = ((go && we && !rmw) || rm_ok) && tp == 1'(p);
-    otpu_sfifo #(.W(512), .DEPTH(OD)) u_of (.clk(uclk), .rst(urq), .wvalid(of_wv[p]),
-      .wready(of_wr[p]), .wdata(of_wd), .rvalid(c_wdata_valid[p]), .rready(c_wdata_ready[p]),
-      .rdata(c_wdata_data[p]));
-    assign c_wdata_we[p] = '1;
+    logic [575:0] of_rf;
+    otpu_sfifo #(.W(576), .DEPTH(OD)) u_of (.clk(uclk), .rst(urq), .wvalid(of_wv[p]),
+      .wready(of_wr[p]), .wdata(of_wf), .rvalid(c_wdata_valid[p]), .rready(c_wdata_ready[p]),
+      .rdata(of_rf));
+    assign c_wdata_data[p] = of_rf[511:0];
+    // RMW = 1: whole beats (the merge above). RMW = 0: the head write's byte enables (the HBM IP's
+    // own read-modify-write fills the beat).
+    assign c_wdata_we[p] = of_rf[575:512];
 
     otpu_sfifo #(.W(TW), .DEPTH(TGD)) u_tag (.clk(uclk), .rst(urq),
       .wvalid(go && (!we || rmw) && tp == 1'(p)), .wready(tg_wr[p]),
@@ -677,7 +697,7 @@ module otpu_mem_ch #(
       $error("otpu_mem_ch: go is not the chosen head's");
     if (a_rgo != (go && !we && !pick_x) || x_rgo != (go && !we && pick_x))
       $error("otpu_mem_ch: a read's issue is not go's");
-    if (c_rdata_valid[1] && c_rdata_data[1] != c_rdata_data[0])
+    if (RBUS && c_rdata_valid[1] && c_rdata_data[1] != c_rdata_data[0])
       $error("otpu_mem_ch: port 1's read data is not on port 0's bus");
     for (int p = 0; p < 2; p++)
       if (c_rdata_valid[p] && !tg_rv[p]) $error("otpu_mem_ch: port %0d read data without a tag", p);
